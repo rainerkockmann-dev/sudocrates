@@ -1,0 +1,2 @@
+# sudocrates
+swapping sudoku analyses
