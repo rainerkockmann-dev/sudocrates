@@ -1,0 +1,829 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sudoku Swapper (Structural Liketall/Fritall)</title>
+  <style>
+    :root { --cell: 38px; --ink:#111; --muted:#666; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 18px; color: var(--ink);}
+    .wrap { display:grid; grid-template-columns:auto 380px; gap:24px; align-items:start; justify-content:center; width:100%; max-width:1200px; margin:0 auto; }
+    .boardStage { display:flex; justify-content:center; width:100%; }
+    .boardPlatform { display:inline-block; padding:18px 18px 22px; border:1px solid #cfcfcf; border-radius:22px; background:linear-gradient(180deg,#fdfdfd 0%,#f4f4f4 100%); box-shadow:0 16px 40px rgba(0,0,0,.08), inset 0 1px 0 rgba(255,255,255,.75); }
+    .boardWrap { display:grid; grid-template-columns:76px auto 88px; grid-template-rows:56px auto 64px; column-gap:12px; row-gap:12px; align-items:start; }
+    .rowHandles { display:grid; grid-template-rows:repeat(9,var(--cell)); gap:0; position:relative; }
+    .bandHandles { display:grid; grid-template-rows:repeat(3, calc(3 * var(--cell))); gap:0; align-self:stretch; }
+    .colHandles { display:grid; grid-template-columns:repeat(9,var(--cell)); height:56px; gap:0; position:relative; }
+    .stackHandles { display:grid; grid-template-columns:repeat(3, calc(3 * var(--cell))); gap:0; height:64px; align-self:start; }
+    .handle { display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--muted);
+              border:1px solid #ddd; user-select:none; cursor:pointer; background:#fafafa; box-sizing:border-box; }
+    .rowHandles .swapHandle, .colHandles .swapHandle { border-style:solid; border-color:#d7d7d7; background:#fbfbfb; color:#555; }
+    .rowHandles .swapHandle { min-height:var(--cell); }
+    .colHandles .swapHandle { min-width:var(--cell); min-height:56px; }
+    .rowHandles .swapHandle.groupEnd, .colHandles .swapHandle.groupEnd { position:relative; }
+    .rowHandles .swapHandle.groupEnd::after {
+      content:""; position:absolute; left:8px; right:8px; bottom:-7px; height:1px; background:#cfcfcf;
+    }
+    .colHandles .swapHandle.groupEnd::after {
+      content:""; position:absolute; top:8px; bottom:8px; right:-7px; width:1px; background:#cfcfcf;
+    }
+    .swapHandle { display:flex; align-items:center; justify-content:center; font-size:12px; color:#333; border:1px dashed #bdbdbd; user-select:none; cursor:grab; background:#f8f8f8; transition:background .15s ease, transform .15s ease, border-color .15s ease, box-shadow .15s ease; box-sizing:border-box; padding:0 6px; overflow:hidden; }
+    .swapHandle:hover { background:#f0f0f0; }
+    .swapHandle.dragging { opacity:.7; cursor:grabbing; transform:scale(.98); }
+    .swapHandle.dropTarget { border-color:#111; background:#fff7d1; box-shadow:inset 0 0 0 1px #111; }
+    .stackHandles .swapHandle { min-height:56px; }
+    .bandHandles .swapHandle { min-height:calc(3 * var(--cell)); }
+    .handle:hover { background:#f0f0f0; }
+    .grid { display:grid; grid-template-columns:repeat(9,var(--cell)); grid-template-rows:repeat(9,var(--cell));
+            border:2px solid #111; width:calc(9 * var(--cell)); }
+    .cell { display:flex; align-items:center; justify-content:center; border:1px solid #ddd; font-size:16px; outline:none; position:relative; }
+    .cell.thickR { border-bottom:2px solid #111; }
+    .cell.thickC { border-right:2px solid #111; }
+
+    /* Local tags (your manual tags stay) */
+    .cell.tagLike { color: orange; font-weight: 800; }
+    .cell.tagFri  { color: green;  font-weight: 800; }
+
+    /* Givens */
+    .cell.given { font-weight: 900; }
+
+    /* Highlight same digits */
+    .cell.hi { box-shadow: inset 0 0 0 3px #111; background: #fff1b8; }
+
+    /* Conflict (wrong input) */
+    .cell.bad { background: #ffd6d6; }
+
+    .panel { border:1px solid #ddd; border-radius:10px; padding:12px; }
+    .panel h3 { margin:0 0 8px; font-size:14px; }
+    .btns { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+    button { padding:8px 10px; border-radius:10px; border:1px solid #ccc; background:#fff; cursor:pointer; }
+    button:hover { background:#f6f6f6; }
+    .small { font-size:12px; color:var(--muted); line-height:1.35; }
+    textarea { width:100%; height:210px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; }
+    hr.sep { border:none; border-top:1px solid #eee; margin:12px 0; }
+    select { width:100%; padding:6px; border-radius:8px; border:1px solid #ccc; background:#fff; }
+    .tag { display:inline-block; padding:2px 8px; border-radius:999px; background:#eee; font-size:12px; margin-right:6px; }
+    .digitRow { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+    .digitBtn { padding:6px 10px; border-radius:999px; border:1px solid #ccc; background:#fff; cursor:pointer; font-size:12px; }
+    .digitBtn.active { background:#111; color:#fff; border-color:#111; }
+  </style>
+</head>
+<body>
+  <h2>Sudoku Swapper — Structural Liketall/Fritall</h2>
+  <div class="small">
+    Swaps are legal symmetry moves. Manual input is enabled.
+    <br/>Local manual tags: clicking marks <span class="tag">cells</span> only (not all identical digits).
+    <br/>New: Structural stats per your formal definitions + click-to-highlight digits.
+    <br/>Drag <b>R</b> row handles, <b>C</b> column handles, right-side <b>band</b> handles, or bottom <b>stack</b> handles onto each other to swap within legal Sudoku limits. The handle number tags travel with the swap.
+    <br/>Rows and columns are subtly divided into legal groups of 3.
+    <br/>Shortcuts: <b>b</b> band swap prompt, <b>s</b> stack swap prompt, <b>Ctrl+Z</b> undo, <b>Ctrl+Y</b> redo.
+  </div>
+
+  <div class="wrap">
+    <div class="boardStage">
+      <div class="boardPlatform">
+        <div class="boardWrap">
+          <div></div>
+          <div class="colHandles" id="colHandles"></div>
+          <div></div>
+
+          <div class="rowHandles" id="rowHandles"></div>
+          <div class="grid" id="grid"></div>
+          <div class="bandHandles" id="bandHandles"></div>
+
+          <div></div>
+          <div class="stackHandles" id="stackHandles"></div>
+          <div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Controls</h3>
+      <div class="btns">
+        <button id="undoBtn">Undo</button>
+        <button id="redoBtn">Redo</button>
+        <button id="clearBtn">Clear board</button>
+        <button id="resetBtn">Reset</button>
+        <button id="copyLogBtn">Copy Log</button>
+      </div>
+
+      <hr class="sep" />
+
+      <h3>Local color-pick mode</h3>
+      <div class="small">
+        Pick mode colors the <b>clicked cell</b> only.
+        Use dropdowns to choose what digit you are tagging, or set to <b>&lt;none&gt;</b>.
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr; gap:10px; margin-top:8px;">
+        <div>
+          <div class="small"><b>Liketall tag digit (optional)</b></div>
+          <select id="likeTagSel"></select>
+        </div>
+        <div>
+          <div class="small"><b>Fritall tag digit (optional)</b></div>
+          <select id="friTagSel"></select>
+        </div>
+      </div>
+
+      <div class="btns" style="margin-top:10px;">
+        <button id="pickOffBtn">Pick: Off</button>
+        <button id="pickLikeBtn">Pick: Liketall</button>
+        <button id="pickFriBtn">Pick: Fritall</button>
+        <button id="eraseTagBtn">Erase tag</button>
+      </div>
+
+      <div class="small" id="pickStatus">Pick mode: <b>Off</b></div>
+
+      <hr class="sep" />
+
+      <h3>Structural stats</h3>
+      <div class="btns">
+        <button id="structBtn">Compute structural stats</button>
+        <button id="copyStructBtn">Copy stats</button>
+        <button id="clearHiBtn">Clear highlight</button>
+      </div>
+
+      <div class="small">Click a digit below to highlight all occurrences on the board (also: click a filled cell).</div>
+      <div class="digitRow" id="digitRow"></div>
+
+      <textarea id="structBox" readonly style="height:240px;"></textarea>
+
+      <hr class="sep" />
+
+      <h3>Tag utilities</h3>
+      <div class="btns">
+        <button id="clearTagsBtn">Clear all tags</button>
+      </div>
+
+      <hr class="sep" />
+
+      <div class="small"><b>Swap log</b> (replayable & invertible):</div>
+      <textarea id="logBox" readonly></textarea>
+    </div>
+  </div>
+
+<script>
+  const BASE = [
+    [2,4,5,3,1,6,9,8,7],
+    [3,6,8,4,7,9,2,1,5],
+    [7,1,9,2,5,8,3,4,6],
+    [4,2,1,9,6,7,5,3,8],
+    [5,3,7,8,2,1,4,6,9],
+    [8,9,6,5,3,4,7,2,1],
+    [6,5,2,7,8,3,1,9,4],
+    [9,8,3,1,4,5,6,7,2],
+    [1,7,4,6,9,2,8,5,3],
+  ];
+
+  function deepCopy(a){ return a.map(r => r.slice()); }
+  function $(id){ return document.getElementById(id); }
+
+  let grid = deepCopy(BASE);
+  let givens = Array.from({length:9},()=>Array(9).fill(false));
+  let tags = Array.from({length:9},()=>Array(9).fill("")); // "", "like", "fri"
+
+  let history = [];
+  let redoStack = [];
+  let pending = null;
+
+  let pickMode = "off"; // "off" | "like" | "fri" | "erase"
+  let highlightDigit = 0; // 0 = none
+  let dragSwap = null;
+  let rowHandleOrder = [1,2,3,4,5,6,7,8,9];
+  let colHandleOrder = [1,2,3,4,5,6,7,8,9];
+  let bandHandleOrder = [1,2,3];
+  let stackHandleOrder = [1,2,3];
+
+  function setPickMode(mode){
+    pickMode = mode;
+    const st = $("pickStatus");
+    if(mode==="off") st.innerHTML = "Pick mode: <b>Off</b>";
+    if(mode==="like") st.innerHTML = "Pick mode: <b>Liketall</b> — click a filled cell";
+    if(mode==="fri") st.innerHTML = "Pick mode: <b>Fritall</b> — click a filled cell";
+    if(mode==="erase") st.innerHTML = "Pick mode: <b>Erase tag</b> — click a cell";
+  }
+
+  function fillSelectWithNone(id, defaultVal){
+    const s = $(id);
+    s.innerHTML = "";
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "<none>";
+    s.appendChild(none);
+    for(let v=1; v<=9; v++){
+      const opt = document.createElement("option");
+      opt.value = String(v);
+      opt.textContent = String(v);
+      if(v === defaultVal) opt.selected = true;
+      s.appendChild(opt);
+    }
+  }
+
+  // === Conflict detection (row/col/block duplicates) ===
+  function buildConflicts(){
+    const bad = Array.from({length:9},()=>Array(9).fill(false));
+    // rows
+    for(let r=0;r<9;r++){
+      const seen = new Map();
+      for(let c=0;c<9;c++){
+        const v = grid[r][c]; if(!v) continue;
+        if(!seen.has(v)) seen.set(v, []);
+        seen.get(v).push([r,c]);
+      }
+      for(const [v, cells] of seen.entries()){
+        if(cells.length>1) for(const [rr,cc] of cells) bad[rr][cc] = true;
+      }
+    }
+    // cols
+    for(let c=0;c<9;c++){
+      const seen = new Map();
+      for(let r=0;r<9;r++){
+        const v = grid[r][c]; if(!v) continue;
+        if(!seen.has(v)) seen.set(v, []);
+        seen.get(v).push([r,c]);
+      }
+      for(const [v, cells] of seen.entries()){
+        if(cells.length>1) for(const [rr,cc] of cells) bad[rr][cc] = true;
+      }
+    }
+    // blocks
+    for(let br=0;br<3;br++){
+      for(let bc=0;bc<3;bc++){
+        const seen = new Map();
+        for(let r=br*3;r<br*3+3;r++){
+          for(let c=bc*3;c<bc*3+3;c++){
+            const v = grid[r][c]; if(!v) continue;
+            if(!seen.has(v)) seen.set(v, []);
+            seen.get(v).push([r,c]);
+          }
+        }
+        for(const [v, cells] of seen.entries()){
+          if(cells.length>1) for(const [rr,cc] of cells) bad[rr][cc] = true;
+        }
+      }
+    }
+    return bad;
+  }
+
+  function renderDigitRow(){
+    const row = $("digitRow");
+    row.innerHTML = "";
+    for(let d=1; d<=9; d++){
+      const b = document.createElement("button");
+      b.className = "digitBtn" + (highlightDigit===d ? " active" : "");
+      b.textContent = String(d);
+      b.onclick = () => {
+        highlightDigit = (highlightDigit===d) ? 0 : d;
+        render();
+      };
+      row.appendChild(b);
+    }
+  }
+
+  function render(){
+    const el = $("grid");
+    el.innerHTML = "";
+
+    const bad = buildConflicts();
+
+    for(let r=0;r<9;r++){
+      for(let c=0;c<9;c++){
+        const v = grid[r][c];
+        const d = document.createElement("div");
+        d.className = "cell";
+        d.contentEditable = true;
+
+        if (r===2 || r===5) d.classList.add("thickR");
+        if (c===2 || c===5) d.classList.add("thickC");
+
+        if(tags[r][c] === "like") d.classList.add("tagLike");
+        if(tags[r][c] === "fri")  d.classList.add("tagFri");
+        if(givens[r][c]) d.classList.add("given");
+
+        if(highlightDigit && v === highlightDigit) d.classList.add("hi");
+        if(bad[r][c]) d.classList.add("bad");
+
+        d.textContent = (v===0) ? "" : String(v);
+
+        d.onmousedown = (e) => {
+          // Click-to-highlight digit (even without any mode)
+          if(grid[r][c]){
+            // If user holds Alt, do NOT highlight (lets them edit)
+            if(!e.altKey && pickMode==="off"){
+              e.preventDefault();
+              highlightDigit = (highlightDigit===grid[r][c]) ? 0 : grid[r][c];
+              render();
+              return;
+            }
+          }
+
+          if(pickMode !== "off"){
+            e.preventDefault();
+            if(pickMode === "erase"){
+              tags[r][c] = "";
+              render();
+              return;
+            }
+            const digit = grid[r][c];
+            if(!digit) return;
+
+            if(pickMode === "like"){
+              const sel = $("likeTagSel").value;
+              if(sel === "" || parseInt(sel,10) === digit){
+                tags[r][c] = "like";
+                render();
+              }
+            }
+            if(pickMode === "fri"){
+              const sel = $("friTagSel").value;
+              if(sel === "" || parseInt(sel,10) === digit){
+                tags[r][c] = "fri";
+                render();
+              }
+            }
+          }
+        };
+
+        d.onkeydown = (e) => {
+          if (!(/[1-9]/.test(e.key) || e.key === "Backspace" || e.key === "Delete" || e.key === "0" ||
+                e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown" ||
+                e.key === "Tab")) {
+            e.preventDefault();
+          }
+        };
+
+        d.oninput = () => {
+          const raw = (d.textContent || "").trim();
+          const ch = raw.length ? raw[raw.length - 1] : "";
+          const nv = parseInt(ch, 10);
+          if(nv >= 1 && nv <= 9){
+            grid[r][c] = nv;
+            givens[r][c] = true;
+          } else {
+            grid[r][c] = 0;
+            givens[r][c] = false;
+            tags[r][c] = "";
+          }
+          render();
+        };
+
+        el.appendChild(d);
+      }
+    }
+
+    renderHandles();
+    renderDigitRow();
+    $("logBox").value = history.map((op,i)=> `${String(i+1).padStart(3,"0")}  ${op}`).join("\n");
+  }
+
+  function makeSwapHandle(type, slotIdx, labelNumber, groupEnd=false){
+    const d = document.createElement("div");
+    d.className = "swapHandle" + (groupEnd ? " groupEnd" : "");
+    const typeLabel = ({row:"R", col:"C", band:"Band", stack:"Stack"})[type] || type;
+    d.textContent = `${typeLabel} ${labelNumber}`;
+    d.draggable = true;
+    d.dataset.type = type;
+    d.dataset.slot = String(slotIdx);
+    d.dataset.labelNumber = String(labelNumber);
+
+    d.addEventListener("dragstart", (e) => {
+      dragSwap = {type, slotIdx};
+      d.classList.add("dragging");
+      if(e.dataTransfer){
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", `${type}:${slotIdx}`);
+      }
+    });
+    d.addEventListener("dragend", () => {
+      dragSwap = null;
+      d.classList.remove("dragging");
+      document.querySelectorAll(".swapHandle").forEach(el => el.classList.remove("dropTarget"));
+    });
+    d.addEventListener("dragover", (e) => {
+      if(dragSwap && dragSwap.type === type && dragSwap.slotIdx !== slotIdx && isLegalSwap(type, dragSwap.slotIdx, slotIdx)){
+        e.preventDefault();
+        if(e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        d.classList.add("dropTarget");
+      }
+    });
+    d.addEventListener("dragenter", (e) => {
+      if(dragSwap && dragSwap.type === type && dragSwap.slotIdx !== slotIdx && isLegalSwap(type, dragSwap.slotIdx, slotIdx)){
+        e.preventDefault();
+        d.classList.add("dropTarget");
+      }
+    });
+    d.addEventListener("dragleave", () => d.classList.remove("dropTarget"));
+    d.addEventListener("drop", (e) => {
+      e.preventDefault();
+      d.classList.remove("dropTarget");
+      if(!dragSwap || dragSwap.type !== type || dragSwap.slotIdx === slotIdx || !isLegalSwap(type, dragSwap.slotIdx, slotIdx)) return;
+      const fromSlot = dragSwap.slotIdx;
+      const toSlot = slotIdx;
+      const a = fromSlot + 1;
+      const b = toSlot + 1;
+      if(type === "row") applyOp(`ROW ${a}<->${b}`);
+      if(type === "col") applyOp(`COL ${a}<->${b}`);
+      if(type === "band") applyOp(`BAND ${a}<->${b}`);
+      if(type === "stack") applyOp(`STACK ${a}<->${b}`);
+      dragSwap = null;
+      render();
+    });
+    return d;
+  }
+
+  function isLegalSwap(type, a, b){
+    if(type === "row" || type === "col") return Math.floor(a/3) === Math.floor(b/3);
+    return true;
+  }
+
+  function swapHandleLabels(kind, a, b){
+    const map = { row: rowHandleOrder, col: colHandleOrder, band: bandHandleOrder, stack: stackHandleOrder };
+    const arr = map[kind];
+    if(!arr) return;
+    [arr[a], arr[b]] = [arr[b], arr[a]];
+  }
+
+  function renderHandles(){
+    const rowH = $("rowHandles");
+    const colH = $("colHandles");
+    const bandH = $("bandHandles");
+    const stackH = $("stackHandles");
+    rowH.innerHTML = "";
+    colH.innerHTML = "";
+    bandH.innerHTML = "";
+    stackH.innerHTML = "";
+
+    for(let r=0;r<9;r++) rowH.appendChild(makeSwapHandle("row", r, rowHandleOrder[r], r===2 || r===5));
+    for(let c=0;c<9;c++) colH.appendChild(makeSwapHandle("col", c, colHandleOrder[c], c===2 || c===5));
+    for(let b=0;b<3;b++) bandH.appendChild(makeSwapHandle("band", b, bandHandleOrder[b]));
+    for(let s=0;s<3;s++) stackH.appendChild(makeSwapHandle("stack", s, stackHandleOrder[s]));
+  }
+
+  function swapRows(r1, r2){
+    [grid[r1], grid[r2]] = [grid[r2], grid[r1]];
+    [givens[r1], givens[r2]] = [givens[r2], givens[r1]];
+    [tags[r1], tags[r2]] = [tags[r2], tags[r1]];
+  }
+  function swapCols(c1, c2){
+    for(let r=0;r<9;r++){
+      [grid[r][c1], grid[r][c2]] = [grid[r][c2], grid[r][c1]];
+      [givens[r][c1], givens[r][c2]] = [givens[r][c2], givens[r][c1]];
+      [tags[r][c1], tags[r][c2]] = [tags[r][c2], tags[r][c1]];
+    }
+  }
+  function swapBands(b1, b2){ for(let i=0;i<3;i++) swapRows(b1*3+i, b2*3+i); }
+  function swapStacks(s1, s2){ for(let i=0;i<3;i++) swapCols(s1*3+i, s2*3+i); }
+
+  function applyOp(opStr, record=true){
+    const parts = opStr.split(" ");
+    const kind = parts[0];
+    const [a,b] = parts[1].split("<->").map(x=> parseInt(x,10));
+    if(kind==="ROW"){ swapRows(a-1,b-1); swapHandleLabels("row", a-1, b-1); }
+    if(kind==="COL"){ swapCols(a-1,b-1); swapHandleLabels("col", a-1, b-1); }
+    if(kind==="BAND"){ swapBands(a-1,b-1); swapHandleLabels("band", a-1, b-1); }
+    if(kind==="STACK"){ swapStacks(a-1,b-1); swapHandleLabels("stack", a-1, b-1); }
+    if(record){ history.push(opStr); redoStack = []; }
+  }
+  function invertOp(opStr){ return opStr; }
+
+  function handleClick(type, idx){
+    const group = Math.floor(idx/3);
+    if(!pending){ pending = {type, idx, group}; return; }
+    if(pending.type !== type){ pending = null; return; }
+    if((type === "row" || type === "col") && pending.group !== group){ pending = null; return; }
+    const a = pending.idx + 1;
+    const b = idx + 1;
+    if(type==="row") applyOp(`ROW ${a}<->${b}`);
+    if(type==="col") applyOp(`COL ${a}<->${b}`);
+    pending = null;
+    render();
+  }
+
+  function promptBandSwap(){
+    const x = prompt("Swap bands: enter like '1 2' (Band numbers 1..3):");
+    if(!x) return;
+    const [a,b]=x.trim().split(/\s+/).map(Number);
+    if(!a||!b||a<1||a>3||b<1||b>3||a===b) return;
+    applyOp(`BAND ${a}<->${b}`);
+    render();
+  }
+  function promptStackSwap(){
+    const x = prompt("Swap stacks: enter like '1 3' (Stack numbers 1..3):");
+    if(!x) return;
+    const [a,b]=x.trim().split(/\s+/).map(Number);
+    if(!a||!b||a<1||a>3||b<1||b>3||a===b) return;
+    applyOp(`STACK ${a}<->${b}`);
+    render();
+  }
+
+  // === Structural analysis per your definitions ===
+  function pairsKey(a,b){ return a<b ? `${a},${b}` : `${b},${a}`; }
+
+  function miniRowDigitsInBandBlock(bandIdx, blockCol, miniRowIdx){
+    // bandIdx: 0..2, blockCol: 0..2, miniRowIdx: 0..2
+    const r = bandIdx*3 + miniRowIdx;
+    const c0 = blockCol*3;
+    return [grid[r][c0], grid[r][c0+1], grid[r][c0+2]].filter(v=>v>=1 && v<=9);
+  }
+
+  function miniColDigitsInStackBlock(stackIdx, blockRow, miniColIdx){
+    // stackIdx: 0..2, blockRow: 0..2, miniColIdx: 0..2
+    const c = stackIdx*3 + miniColIdx;
+    const r0 = blockRow*3;
+    return [grid[r0][c], grid[r0+1][c], grid[r0+2][c]].filter(v=>v>=1 && v<=9);
+  }
+
+  function findLiketallPairsInBand(bandIdx){
+    // returns array of {a,b, perBlockMiniRow:[mr0,mr1,mr2], fritallPerBlock:[f0,f1,f2]}
+    const pairs = [];
+    // candidate pairs from digits 1..9
+    for(let a=1;a<=9;a++){
+      for(let b=a+1;b<=9;b++){
+        const miniRows = [];
+        const fritalls = [];
+        let ok = true;
+
+        for(let blockCol=0; blockCol<3; blockCol++){
+          let found = -1;
+          let foundF = 0;
+
+          for(let mr=0; mr<3; mr++){
+            const digs = miniRowDigitsInBandBlock(bandIdx, blockCol, mr);
+            const hasA = digs.includes(a);
+            const hasB = digs.includes(b);
+            if(hasA && hasB){
+              if(found !== -1){ ok = false; break; } // more than once in this block
+              found = mr;
+              // third digit (if solved/filled)
+              const third = digs.find(x => x!==a && x!==b) || 0;
+              foundF = third;
+            }
+          }
+
+          if(!ok) break;
+          if(found === -1){ ok = false; break; }
+          miniRows.push(found);
+          fritalls.push(foundF);
+        }
+
+        if(!ok) continue;
+        // must be all different: 0,1,2 in some order
+        if(new Set(miniRows).size !== 3) continue;
+
+        pairs.push({a,b, perBlockMiniRow: miniRows, fritallPerBlock: fritalls});
+      }
+    }
+    return pairs;
+  }
+
+  function findLiketallPairsInStack(stackIdx){
+    // returns array of {a,b, perBlockMiniCol:[mc0,mc1,mc2], fritallPerBlock:[f0,f1,f2]}
+    const pairs = [];
+    for(let a=1;a<=9;a++){
+      for(let b=a+1;b<=9;b++){
+        const miniCols = [];
+        const fritalls = [];
+        let ok = true;
+
+        for(let blockRow=0; blockRow<3; blockRow++){
+          let found = -1;
+          let foundF = 0;
+
+          for(let mc=0; mc<3; mc++){
+            const digs = miniColDigitsInStackBlock(stackIdx, blockRow, mc);
+            const hasA = digs.includes(a);
+            const hasB = digs.includes(b);
+            if(hasA && hasB){
+              if(found !== -1){ ok = false; break; }
+              found = mc;
+              const third = digs.find(x => x!==a && x!==b) || 0;
+              foundF = third;
+            }
+          }
+
+          if(!ok) break;
+          if(found === -1){ ok = false; break; }
+          miniCols.push(found);
+          fritalls.push(foundF);
+        }
+
+        if(!ok) continue;
+        if(new Set(miniCols).size !== 3) continue;
+
+        pairs.push({a,b, perBlockMiniCol: miniCols, fritallPerBlock: fritalls});
+      }
+    }
+    return pairs;
+  }
+
+  function computeStructuralStats(){
+    // collect pairs per band/stack
+    const bandPairs = [];
+    const stackPairs = [];
+    for(let b=0;b<3;b++) bandPairs.push(findLiketallPairsInBand(b));
+    for(let s=0;s<3;s++) stackPairs.push(findLiketallPairsInStack(s));
+
+    // digit role sets
+    const liketallInBands = Array.from({length:10},()=>new Set());
+    const liketallInStacks = Array.from({length:10},()=>new Set());
+    const fritallInBands = Array.from({length:10},()=>new Set());
+    const fritallInStacks = Array.from({length:10},()=>new Set());
+
+    // fill roles from band pairs
+    for(let b=0;b<3;b++){
+      for(const p of bandPairs[b]){
+        liketallInBands[p.a].add(b);
+        liketallInBands[p.b].add(b);
+        for(const f of p.fritallPerBlock){
+          if(f) fritallInBands[f].add(b);
+        }
+      }
+    }
+    // fill roles from stack pairs
+    for(let s=0;s<3;s++){
+      for(const p of stackPairs[s]){
+        liketallInStacks[p.a].add(s);
+        liketallInStacks[p.b].add(s);
+        for(const f of p.fritallPerBlock){
+          if(f) fritallInStacks[f].add(s);
+        }
+      }
+    }
+
+    const doubleLiketall = [];
+    const bandOnlyLike = [];
+    const stackOnlyLike = [];
+    const fritallOnly = [];
+    const crossovers = [];
+
+    for(let d=1; d<=9; d++){
+      const inB = liketallInBands[d].size > 0;
+      const inS = liketallInStacks[d].size > 0;
+      const fB = fritallInBands[d].size > 0;
+      const fS = fritallInStacks[d].size > 0;
+
+      if(inB && inS) doubleLiketall.push(d);
+      if(inB && !inS) bandOnlyLike.push(d);
+      if(inS && !inB) stackOnlyLike.push(d);
+
+      // "fritall digits" = any digit that ever acts as fritall (band or stack)
+      if((fB || fS) && !(inB || inS)) fritallOnly.push(d);
+
+      // crossover roles
+      if((fB && inS) || (fS && inB)) crossovers.push(d);
+    }
+
+    // check “rotation” idea: count attachments fritall -> pair keys
+    const attachBand = Array.from({length:10},()=>new Set());
+    const attachStack = Array.from({length:10},()=>new Set());
+
+    for(let b=0;b<3;b++){
+      for(const p of bandPairs[b]){
+        const k = pairsKey(p.a,p.b);
+        for(const f of p.fritallPerBlock) if(f) attachBand[f].add(`B${b+1}:${k}`);
+      }
+    }
+    for(let s=0;s<3;s++){
+      for(const p of stackPairs[s]){
+        const k = pairsKey(p.a,p.b);
+        for(const f of p.fritallPerBlock) if(f) attachStack[f].add(`S${s+1}:${k}`);
+      }
+    }
+
+    function pct(part, whole){
+      if(!whole) return "0.0%";
+      return (100*part/whole).toFixed(1) + "%";
+    }
+
+    const lines = [];
+    lines.push("=== LIKETALLPAR (Bands) ===");
+    for(let b=0;b<3;b++){
+      lines.push(`Band ${b+1}: ${bandPairs[b].length} pairs`);
+      for(const p of bandPairs[b]){
+        lines.push(`  {${p.a},${p.b}}  mini-rows per block: [${p.perBlockMiniRow.join(",")}]  fritall: [${p.fritallPerBlock.join(",")}]`);
+      }
+    }
+    lines.push("");
+    lines.push("=== LIKETALLPAR (Stacks) ===");
+    for(let s=0;s<3;s++){
+      lines.push(`Stack ${s+1}: ${stackPairs[s].length} pairs`);
+      for(const p of stackPairs[s]){
+        lines.push(`  {${p.a},${p.b}}  mini-cols per block: [${p.perBlockMiniCol.join(",")}]  fritall: [${p.fritallPerBlock.join(",")}]`);
+      }
+    }
+
+    lines.push("");
+    lines.push("=== DIGIT ROLES (1..9) ===");
+    lines.push(`Double liketall digits: ${doubleLiketall.join(" ") || "(none)"}  (${doubleLiketall.length}/9 = ${pct(doubleLiketall.length,9)})`);
+    lines.push(`Band-only liketall digits: ${bandOnlyLike.join(" ") || "(none)"}`);
+    lines.push(`Stack-only liketall digits: ${stackOnlyLike.join(" ") || "(none)"}`);
+    lines.push(`Crossover digits (fritall↔liketall across directions): ${crossovers.join(" ") || "(none)"}`);
+    lines.push("");
+
+    lines.push("=== FRITALL ATTACHMENTS (sanity view) ===");
+    for(let d=1; d<=9; d++){
+      const aB = attachBand[d].size;
+      const aS = attachStack[d].size;
+      if(aB || aS){
+        lines.push(`Digit ${d}: fritall attachments — bands:${aB}  stacks:${aS}`);
+      }
+    }
+
+    return lines.join("\n");
+  }
+
+  // Buttons
+  $("undoBtn").onclick = () => {
+    const op = history.pop();
+    if(!op) return;
+    applyOp(invertOp(op), false);
+    redoStack.push(op);
+    render();
+  };
+  $("redoBtn").onclick = () => {
+    const op = redoStack.pop();
+    if(!op) return;
+    applyOp(op, true);
+    render();
+  };
+  $("clearBtn").onclick = () => {
+    for(let r=0;r<9;r++){
+      for(let c=0;c<9;c++){
+        grid[r][c]=0; givens[r][c]=false; tags[r][c]="";
+      }
+    }
+    history=[]; redoStack=[]; pending=null;
+    highlightDigit = 0;
+    rowHandleOrder = [1,2,3,4,5,6,7,8,9];
+    colHandleOrder = [1,2,3,4,5,6,7,8,9];
+    bandHandleOrder = [1,2,3];
+    stackHandleOrder = [1,2,3];
+    $("structBox").value = "";
+    render();
+  };
+  $("resetBtn").onclick = () => {
+    grid = deepCopy(BASE);
+    givens = Array.from({length:9},()=>Array(9).fill(false));
+    tags = Array.from({length:9},()=>Array(9).fill(""));
+    history=[]; redoStack=[]; pending=null;
+    highlightDigit = 0;
+    rowHandleOrder = [1,2,3,4,5,6,7,8,9];
+    colHandleOrder = [1,2,3,4,5,6,7,8,9];
+    bandHandleOrder = [1,2,3];
+    stackHandleOrder = [1,2,3];
+    $("structBox").value = "";
+    render();
+  };
+  $("copyLogBtn").onclick = async () => {
+    try{ await navigator.clipboard.writeText($("logBox").value); alert("Swap log copied."); }
+    catch(e){ alert("Could not copy. Select the log and copy manually."); }
+  };
+
+  $("pickOffBtn").onclick = () => setPickMode("off");
+  $("pickLikeBtn").onclick = () => setPickMode("like");
+  $("pickFriBtn").onclick = () => setPickMode("fri");
+  $("eraseTagBtn").onclick = () => setPickMode("erase");
+
+  $("clearTagsBtn").onclick = () => {
+    for(let r=0;r<9;r++) for(let c=0;c<9;c++) tags[r][c] = "";
+    render();
+  };
+
+  $("structBtn").onclick = () => {
+    $("structBox").value = computeStructuralStats();
+  };
+
+  $("copyStructBtn").onclick = async () => {
+    try{ await navigator.clipboard.writeText($("structBox").value); alert("Stats copied."); }
+    catch(e){ alert("Could not copy. Select the stats and copy manually."); }
+  };
+
+  $("clearHiBtn").onclick = () => {
+    highlightDigit = 0;
+    render();
+  };
+
+  window.addEventListener("keydown", (e) => {
+    if(e.ctrlKey && e.key.toLowerCase()==="z"){ e.preventDefault(); $("undoBtn").click(); }
+    if(e.ctrlKey && e.key.toLowerCase()==="y"){ e.preventDefault(); $("redoBtn").click(); }
+    if(!e.ctrlKey && e.key.toLowerCase()==="b"){ promptBandSwap(); }
+    if(!e.ctrlKey && e.key.toLowerCase()==="s"){ promptStackSwap(); }
+    if(!e.ctrlKey && e.key === "Escape"){
+      highlightDigit = 0;
+      render();
+    }
+  });
+
+  fillSelectWithNone("likeTagSel", 7);
+  fillSelectWithNone("friTagSel", 1);
+  $("likeTagSel").value = "";
+  $("friTagSel").value = "";
+
+  history.push("TIP: Structural stats use your formal definition of liketall pairs in bands/stacks (3 blocks, 1 occurrence per block, all different block-rows/cols).");
+  setPickMode("off");
+  render();
+</script>
+</body>
+</html>
